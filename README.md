@@ -1,2 +1,3 @@
 # HelloWorld
-say hello to github
+Hi, Friends:
+  1 love python.Life is short, I chose python.
