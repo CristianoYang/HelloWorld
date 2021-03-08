@@ -151,11 +151,7 @@
 
     - **降低资源消耗**。通过重复利用已创建的线程降低线程创建和销毁造成的消耗。
     - **提高响应速度**。当任务到达时，任务可以不需要的等到线程创建就能立即执行。
-    - **提高线程的可管理性**。线程是稀缺资源，如果无限制的创建，不仅会消耗系统资源，还会降低系统的稳定性，使用线程池可以进行统一的分配，调优和监控。
-
-12. 实现 Runnable 接口和 Callable 接口的区别？
-
-    `Runnable` 接口**不会返回结果或抛出检查异常，但是**`Callable` 接口**可以**
+    - **提高线程的可管理性**。线程是稀缺资源，如果无限制的创建，不仅会消耗系统资源，还会降低系统的稳定性，使用线程池可以进行统一的分配，调优和监控
 
 13. TreadPoolExecutor重要参数？
 
@@ -212,6 +208,90 @@
     - 存在ABA问题：因为CAS需要在操作值的时候检查下值有没有发生变化，如果没有发生变化则更新，但是如果一个值原来是A，变成了B，又变成了A，那么使用CAS进行检查时会发现它的值没有发生变化，但是实际上却变化了。可以通过增加标志位来解决。
     - 循环时间长开销大：自旋CAS如果长时间不成功，会给CPU带来非常大的执行开销。
     - 只能保证一个共享变量的原子操作。
+    
+19. i++是否线程安全？
+
+    不安全，因为i++其实是分为三步，第一步读取i值，第二步加1，第三步赋值给i。这三步任意之间都有可能会由cpu调度造成i值修改。
+
+    如果是方法里面定义的，是安全的，因为方法是线程私有；如果是静态变量，则线程不安全。
+
+    可以通过synchronized进行同步；或者使用cas的原子类。
+
+20. 创建多线程的方法？
+
+    （1）继承Thread类，重写run方法
+
+    ```java
+    public class Main{
+    	public static void main(String[] args){
+            new MyThread().start();
+        }
+    }
+    
+    class MyThread extends Thread{
+        @Override
+        public void run(){
+            System.out.println(Thread.currentThread.getName());
+        }
+    }
+    ```
+
+    （2）实现Runnable接口，重写run方法，用Thread类包装
+
+    ```java
+    public class Main {
+        public static void main(String[] args){
+            MyThread thread = new MyThread();
+            new Thread(thread).start();
+        }
+    }
+    
+    class MyThread implements Runnable{
+        @Override
+        public void run(){
+            System.out.println(Thread.currentThread.getName());
+        }
+    }
+    ```
+
+    （3）实现Callable，重写call方法，用FutureTask类包装，再用Thread类包装
+
+    ```java
+    public class Main{
+        public static void main(String[] args){
+            // 将Callable包装成FutureTask，FutureTask也是一种Runnable
+            MyCallable callable = new MyCallable();
+            FutureTask<Integer> futureTask = new FutureTask<>(callable);
+            new Thread(futureTask).start();
+    
+            // get方法会阻塞调用的线程
+            Integer sum = futureTask.get();
+            System.out.println(Thread.currentThread().getName() + Thread.currentThread().getId() + "=" + sum);
+        }
+    }
+    
+    class MyCallable implements Callable<Integer>{
+        @Override
+        public Integer call() throws Exception{
+            System.out.println(Thread.currentThread.getName());
+            int sum = 0;
+            for (int i = 0; i <= 100000; i++) {
+                sum += i;
+            }
+            Thread.sleep(5000);
+            System.out.println(Thread.currentThread.getName());
+            return sum;
+        }
+    }
+    ```
+
+    （4）三者的区别？
+
+    - Thread: 继承方式, 不建议使用, 因为Java是单继承的，继承了Thread就没办法继承其它类了，不够灵活
+    - Runnable: 实现接口，比Thread类更加灵活，没有单继承的限制
+    - Callable: Thread和Runnable都是重写的run()方法并且没有返回值，Callable是重写的call()方法并且有返回值并可以借助FutureTask类来判断线程是否已经执行完毕或者取消线程执行
+    - 当线程不需要返回值时使用Runnable，需要返回值时就使用Callable，一般情况下不直接把线程体代码放到Thread类中，一般通过Thread类来启动线程
+      Thread类是实现Runnable，Callable封装成FutureTask，FutureTask实现RunnableFuture，RunnableFuture继承Runnable，所以Callable也算是一种Runnable，所以三种实现方式本质上都是Runnable实现
 
 #### 1.3 JVM
 
@@ -404,6 +484,65 @@ JAVA 反射机制是在运行状态中，对于任意一个类，都能够知道
      1. 定义一个类；
      2. 自定义 `MethodInterceptor` 并重写 `intercept` 方法，`intercept` 用于拦截增强被代理类的方法，和 JDK 动态代理中的 `invoke` 方法类似；
      3. 通过 `Enhancer` 类的 `create()`创建代理类；
+
+#### 1.6 基础
+
+1. static关键字？
+
+   - static修饰成员变量和成员方法，被修饰的成员属于这个类，不属于某个对象，被类中所有对象共享，可以通过类名调用。静态变量成员存放在方法区中。
+   - 静态代码块：无论类被实例化多少次，代码块只执行一次。
+   - 静态内部类：它的创建不需要依赖外围类的创建；不能使用任何外围类的非静态成员变量和方法。
+
+2. java8新特性？
+
+   - lambda表达式
+
+     ```java
+     Collections.sort(names, (String a, String b) -> b.compareTo(a));
+     ```
+
+   - Stream流
+
+     常用filter、sorted、map、match、count等
+
+     ```java
+     // 测试 Map 操作
+             stringList
+                     .stream()
+                     .map(String::toUpperCase)
+                     .sorted((a, b) -> b.compareTo(a))
+                     .forEach(System.out::println);// "DDD2", "DDD1", "CCC", "BBB3", "BBB2", "AAA2", "AAA1"
+     ```
+
+   - Optional类检查空指针
+
+   - 时间API，Clock、LocalDateTime，ZonedDateTime等
+
+   - JDK8提供了接口static和Default方法。特别是Default修饰的方法，dafault修饰符是我们设计模式中的适配器设计模式的重要实现原理，让我们接口实现类不需要重写全部的抽象方法，default修饰的方法可以选择性的重写。
+
+3. 抽象类和接口的区别？
+
+   （1）抽象类
+
+   - 抽象方法只有方法名，没有方法体，用abstract修饰
+   - 抽象类用abstract修饰
+   - 抽象类的构造器不能创造实例，不能实例化
+   - 抽象类包含成员变量、方法（普通方法或者抽象方法都行）、初始化块、内部类
+   - 抽象类不一定包含抽象方法，有抽象方法一定是抽象类
+   - abstract和static不能修饰同一个方法，与private和final不能共存
+
+   （2）接口
+
+   - 接口方法都是公有的，编译时自动加上public、abstract
+   - 接口里的成员变量只能是public、static、final共同修饰
+
+   （3）区别
+
+   - 接口里不能实现方法体，抽象类可以
+   - 接口可以多继承，抽象类不行
+   - 接口是被实现，抽象类是被继承
+   - 接口中只能有公有方法和属性且必须赋初值，抽象类中可以有私有方法和属性
+   - 接口中方法不能为static，属性可以，抽象类中方法可以静态，属性也可以
 
 ### 2. 数据库
 
@@ -1162,11 +1301,12 @@ JAVA 反射机制是在运行状态中，对于任意一个类，都能够知道
        - **二个是数据报套接字，**它不需要建立连接和维持一个连接，它们在域中通常是通过UDP/IP协议实现的。
        - **三是原始套接字，**原始套接字允许对较低层次的协议直接访问，比如IP、 ICMP协议，它常用于检验新的协议实现
 
-3. 线程间的同步方式？
+3. 进程/线程间的同步方式？
 
-   1. **互斥量(Mutex)**：采用互斥对象机制，只有拥有互斥对象的线程才有访问公共资源的权限。因为互斥对象只有一个，所以可以保证公共资源不会被多个线程同时访问。比如 Java 中的 synchronized 关键词和各种 Lock 都是这种机制。
-   2. **信号量(Semphares)** ：它允许同一时刻多个线程访问同一资源，但是需要控制同一时刻访问此资源的最大线程数量
-   3. **事件(Event)** :Wait/Notify：通过通知操作的方式来保持多线程同步，还可以方便的实现多线程优先级的比较操
+   1. **临界区**：在任意时刻只允许一个线程对共享资源进行访问，如果有多个线程试图访问公共资源，那么在有一个线程进入后，其他试图访问公共资源的线程将被挂起，并一直等到进入临界区的线程离开，临界区在被释放后，其他线程才可以抢占。
+   2. **互斥量(Mutex)**：采用互斥对象机制，只有拥有互斥对象的线程才有访问公共资源的权限。因为互斥对象只有一个，所以可以保证公共资源不会被多个线程同时访问。比如 Java 中的 synchronized 关键词和各种 Lock 都是这种机制。
+   3. **信号量(Semphares)** ：它允许同一时刻多个线程访问同一资源，但是需要控制同一时刻访问此资源的最大线程数量
+   4. **事件(Event)** :Wait/Notify：通过通知操作的方式来保持多线程同步，还可以方便的实现多线程优先级的比较操
 
 4. 进程的调度算法？
 
@@ -1541,9 +1681,22 @@ JAVA 反射机制是在运行状态中，对于任意一个类，都能够知道
     - **效率提升，不是轮询的方式，不会随着FD数目的增加效率下降。只有活跃可用的FD才会调用callback函数；**即Epoll最大的优点就在于它只管你“活跃”的连接，而跟连接总数无关，因此在实际的网络环境中，Epoll的效率就会远远高于select和poll。
     - 内存拷贝，利用mmap()文件映射内存加速与内核空间的消息传递；即epoll使用mmap减少复制开销。
 
-    
 
-    
+### 6. 工具
 
-    
+#### 6.1 GIT
+
+1. git常用命令？
+
+   git add readme.md
+
+   git commit -m "xxx"
+
+   git push origin master
+
+   git remote -v
+
+   git clone
+
+   git remote origin git@
 
