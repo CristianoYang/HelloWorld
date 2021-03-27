@@ -24,7 +24,9 @@
 
    `LinkedHashSet` 是 `HashSet` 的子类，能够按照添加的顺序遍历；
 
-   `TreeSet` 底层使用红黑树，能够按照添加元素的顺序进行遍历，排序的方式有自然排序和定制排序。
+   实际上LinkedHashMap的Entry数据结构会多两个属性：before和after，使得LinkedHashMap形成循环双链表，然后可以按照插入顺序或者LRU顺序进行读取；如果是LRU，把最近访问的移到队尾，头结点就是要删除的。
+
+   `TreeSet` 底层使用红黑树，能够按照添加元素的顺序进行遍历，排序的方式有自然排序和定制排序。自定义排序就是重写Comparator的compare方法。
 
 4. HashSet怎么检查重复？
 
@@ -123,6 +125,8 @@
    2. **修饰静态方法:** 也就是给当前类加锁，会作用于类的所有对象实例 ，进入同步代码前要获得 **当前 class 的锁**。
    3. **修饰代码块** ：指定加锁对象，对给定对象/类加锁。`synchronized(this|object)` 表示进入同步代码库前要获得**给定对象的锁**。`synchronized(类.class)` 表示进入同步代码前要获得 **当前 class 的锁**
 
+   synchronized底层原理：重量级锁是通过对象内部的一个叫做监视器锁（monitor）来实现的，监视器锁本质又是依赖于底层的操作系统的Mutex Lock（互斥锁）来实现的。而操作系统实现线程之间的切换需要从用户态转换到核心态，这个成本非常高，状态之间的转换需要相对比较长的时间，这就是为什么Synchronized效率低的原因。
+
 7. synchronized锁升级？锁粗化？锁消除？
 
    锁的四种状态：无锁状态、偏向锁状态、轻量级锁状态、重量级锁状态
@@ -145,11 +149,39 @@
 
    **防止指令重排**，通过`“内存屏障”`来防止指令被重排序。
 
-10. TreadLocal是什么？原理？
+10. TreadLocal是什么？原理详解？
 
      `ThreadLocal`类主要解决的就是让每个线程绑定自己的值，可以将`ThreadLocal`类形象的比喻成存放数据的盒子，盒子中可以存储每个线程的私有数据。
 
     原理：每个`Thread`中都具备一个`ThreadLocalMap`，而`ThreadLocalMap`可以存储以`ThreadLocal`为 key ，Object 对象为 value 的键值对。
+
+    ThreadLocalMap成员变量：
+
+    - capacity：初始容量16，必须是2的幂，因为这样在计算下标的时候很方便
+    - Entry[]数组，长度也是2的幂
+    - size：entrys的个数，判断是否超过阈值需要进行扩容
+    - threshold：阈值，总长度的2/3（和hashmap的负载因子不一样）
+
+    Entry类：Entry继承弱引用，可以将ThreadLocal生命周期和线程生命周期解绑，可以避免线程得不到销毁而ThreadLocal无法回收。
+
+    Set（）方法：
+
+    - ThreadLocal的set（）方法，先获取当前线程，然后获取当前线程的map，如果map为null，则新建一个map，否则执行map的set（）方法
+    - ThreadLocalMap的set（）方法很复杂，简单点来说：
+      - 线性探测法解决hash冲突，因为Entry是没有next字段，也就不会形成链表，如果当前位置已经有元素，则往下寻找空位插入，类似一个循环数组
+      - 整个空间都没有位置，会溢出
+      - 往下探测的过程中，发现过期的key，会删除无效的entry，并进行替换
+
+    Get（）方法：
+
+    - ThreadLocal的get（）方法，获取当前线程，然后或者当前线程的map，如果为空，返回初始化initialValue（）值，然后创建新的map，否则执行map的getEntry（）方法
+    - ThreadLocalMap的getEntry（）方法：
+      - 根据hash值和table大小计算下标，如果下标处非空且刚好是key则返回，否则说明hash冲突，移到别的位置了
+      - 直接计算下标找不到的时候，使用线性探测法查找，顺便清除无效的key
+
+    过期数据指的就是ThreadLocal这个弱引用key被GC回收。
+
+    扩容：当元素超过阈值，也就是长度的2/3，不会马上扩容，先进行过期数据清理，清理完数据仍大于长度的1/2，则进行扩容2倍。
 
 11. 为什么要使用线程池？
 
@@ -171,6 +203,38 @@
     - **`ThreadPoolExecutor.CallerRunsPolicy`**：调用执行自己的线程运行任务，也就是直接在调用`execute`方法的线程中运行(`run`)被拒绝的任务，如果执行程序已关闭，则会丢弃该任务。因此这种策略会降低对于新任务提交速度，影响程序的整体性能。如果您的应用程序可以承受此延迟并且你要求任何一个任务请求都要被执行的话，你可以选择这个策略。
     - **`ThreadPoolExecutor.DiscardPolicy`：** 不处理新任务，直接丢弃掉。
     - **`ThreadPoolExecutor.DiscardOldestPolicy`：** 此策略将丢弃最早的未处理的任务请求。
+
+14. 线程池源码级详解
+
+    类结构：
+
+    - Executor：最顶层接口，只包含一个executor（）方法
+    - ExecutorService：继承Executor接口，添加了submit（）方法，并添加了线程池状态，比如shutdown（）等
+    - AbstractExecutorService：继承ExecutorService，并实现了若干方法，如submit()等
+    - ThreadPoolExecutor : 继承于AbstractExecutorService，是线程池的核心类，几乎所有与线程池有关的逻辑都封装在这个类里边。
+    - DiscardPolicy、DiscardOldestPolicy、AbortPolicy、CallerRunsPolicy : 四种饱和策略。
+    - Worker : 线程池真正的线程类，本身实现了Runnable接口和AQS(AbstractQueuedSynchronizer)接口。
+
+    线程池的状态：
+
+    - running： 运行态，也是线程池的默认状态，当new一个ThreadPoolExecutor实例之后，这个ThreadPoolExecutor的状态就是运行态。运行态能够接受新添加任务，也能够对阻塞队列中的任务进行处理。
+    - shutdown：关闭态，当调用ThreadPoolExecutor实例的showdown()方法之后，这个ThreadPoolExecutor实例就会进入关闭态。关闭态能够对阻塞队列中的任务进行处理，不能够接受新添加的非空任务，但是可以接受新添加的空任务。
+    - stop：停止态，当调用ThreadPoolExecutor实例的shutdownNow()方法之后，这个ThreadPoolExecutor实例就会进入停止态。停止态不能接受新添加任务，也不能够对阻塞队列中的任务进行处理，并且会中断正在运行的任务。
+    - tidying： 整理态，当线程池中所有任务已被终止， 这个ThreadPoolExecutor实例就会进入停止态。
+    - terminated：结束态，当线程池处于整理态，并调用terminated()方法，执行完毕之后，就会进入结束态，此状态也表示整个线程池生命周期的结束。
+
+    线程池的工作流程：
+
+    ![在这里插入图片描述](https://img-blog.csdnimg.cn/20210219131549320.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L211X3dpbmQ=,size_16,color_FFFFFF,t_70#pic_center)
+
+    ​	需要补充的是，Worker类里面有自己的线程，执行完一个任务会循环去找下一个任务getTask()！
+
+    submit和executor的区别：
+
+    - execute只能提交Runnable类型的任务，而submit既能提交Runnable类型任务也能提交Callable类型任务。
+    - execute会直接抛出任务执行时的异常，submit会吃掉异常，可通过Future的get方法将任务执行时的异常重新抛出。
+    - execute没有返回值，submit有返回值，所以需要返回值的时候必须使用submit
+    - 实际上submit里面也是执行的executor。
 
 15. 请你说一下自己对于 AQS 原理的理解？
 
@@ -212,8 +276,8 @@
     - 存在ABA问题：因为CAS需要在操作值的时候检查下值有没有发生变化，如果没有发生变化则更新，但是如果一个值原来是A，变成了B，又变成了A，那么使用CAS进行检查时会发现它的值没有发生变化，但是实际上却变化了。可以通过增加标志位来解决。
     - 循环时间长开销大：自旋CAS如果长时间不成功，会给CPU带来非常大的执行开销。
     - 只能保证一个共享变量的原子操作。
-    
-19. 自旋锁代码？
+
+20. 自旋锁代码？
 
     ```java
     class SpinLock {
@@ -231,9 +295,7 @@
     }
     ```
 
-    
-
-20. i++是否线程安全？
+21. i++是否线程安全？
 
     不安全，因为i++其实是分为三步，第一步读取i值，第二步加1，第三步赋值给i。这三步任意之间都有可能会由cpu调度造成i值修改。
 
@@ -241,7 +303,7 @@
 
     可以通过synchronized进行同步；或者使用cas的原子类。
 
-21. 创建多线程的方法？
+22. 创建多线程的方法？
 
     （1）继承Thread类，重写run方法
 
@@ -316,6 +378,85 @@
     - Callable: Thread和Runnable都是重写的run()方法并且没有返回值，Callable是重写的call()方法并且有返回值并可以借助FutureTask类来判断线程是否已经执行完毕或者取消线程执行
     - 当线程不需要返回值时使用Runnable，需要返回值时就使用Callable，一般情况下不直接把线程体代码放到Thread类中，一般通过Thread类来启动线程
       Thread类是实现Runnable，Callable封装成FutureTask，FutureTask实现RunnableFuture，RunnableFuture继承Runnable，所以Callable也算是一种Runnable，所以三种实现方式本质上都是Runnable实现
+
+23. FutureTask详解
+
+    FutureTask实现了RunnableFuture接口，而RunnableFuture继承了Runnable和Future，也就是说FutureTask既是Runnable，也是Future。
+
+    核心成员：
+
+    - volatile int state：表示对象状态，定义了7种状态
+
+      ```java
+      private static final int NEW          = 0; //任务新建和执行中
+      private static final int COMPLETING   = 1; //任务将要执行完毕
+      private static final int NORMAL       = 2; //任务正常执行结束
+      private static final int EXCEPTIONAL  = 3; //任务异常
+      private static final int CANCELLED    = 4; //任务取消
+      private static final int INTERRUPTING = 5; //任务线程即将被中断
+      private static final int INTERRUPTED  = 6; //任务线程已中断
+      ```
+
+    - Callable<V> callable：被提交的任务
+
+    - Object outcome：任务执行结果或者任务异常
+
+    - volatile Thread runner:执行任务的线程
+
+    - volatile WaitNode waiters：等待节点，关联等待线程
+
+    内部状态转换：
+
+    ​	FutureTask使用state来表示当前状态，state的值变更由CAS表示原子性。一般来说有以下四种情况：
+
+    - 任务正常执行并返回。 NEW -> COMPLETING -> NORMAL
+    - 执行中出现异常。NEW -> COMPLETING -> EXCEPTIONAL
+    - 任务执行过程中被取消，并且不响应中断。NEW -> CANCELLED
+    - 任务执行过程中被取消，并且响应中断。 NEW -> INTERRUPTING -> INTERRUPTED
+
+    核心方法：
+
+    - run（）
+
+      1. 校验当前任务状态是否为NEW以及runner是否已赋值。这一步是防止任务被取消。
+      2. double-check任务状态state
+      3. 执行业务逻辑，也就是c.call()方法被执行
+      4. 如果业务逻辑异常，则调用setException方法将异常对象赋给outcome，并且更新state值
+      5. 如果业务正常，则调用set方法将执行结果赋给outcome，并且更新state值
+
+    - set（V， v）
+
+      状态变更的原子性由unsafe对象提供的CAS操作保证。FutureTask的outcome变量存储执行结果或者异常对象，会由主线程返回。
+
+    - get()
+
+      任务由线程池提供的线程执行，那么这时候主线程则会阻塞，直到任务线程唤醒它们。
+
+      get原理就是首先校验参数，然后根据state状态判断是否超时，超时了就报异常，已经完成或者异常结束了就去report（）返回最终结果；
+
+      如果任务还在进行中，那就进入awaitDone()函数
+
+    - awaitDone（）
+
+      1. 计算deadline，也就是到某个时间点后如果还没有返回结果，那么就超时了。
+      2. 进入自旋，也就是死循环。
+      3. 首先判断是否响应线程中断。对于线程中断的响应往往会放在线程进入阻塞之前，这里也印证了这一点。
+      4. 判断state值，如果>COMPLETING表明任务已经取消或者已经执行完毕，就可以直接返回了。
+      5. 如果任务还在执行，则为当前线程初始化一个等待节点WaitNode，入等待队列。这里和AQS的等待队列类似，只不过Node只关联线程，而没有状态。AQS里面的等待节点是有状态的。
+      6. 计算nanos，判断是否已经超时。如果已经超时，则移除所有等待节点，直接返回state。超时的话，state的值仍然还是COMPLETING。
+      7. 如果还未超时，就通过LockSupprot类提供的方法在指定时间内挂起当前线程，等待任务线程唤醒或者超时唤醒。
+
+    - finishCompletion（）
+
+      当任务正常结束或者异常时，都会调用finishCompletion去唤醒等待线程。这个时候，等待线程就可以醒来，开开心心的获得结果啦。
+
+24. JUC包里都有哪些东西？
+
+    - atomic原子类，核心是CAS
+    - locks包，reentrantLock（可重入锁）、读写锁（ReadWriteLock）等。核心是AQS抽象队列同步器框架。
+    - 并发容器：concurrentMap、BlockingQueue等
+    - 执行框架线程池executor
+    - 并发工具类：CountdownLatch、cyclicBarrier等
 
 #### 1.3 JVM
 
@@ -1279,7 +1420,49 @@ JAVA 反射机制是在运行状态中，对于任意一个类，都能够知道
     
     ![img](https://img-blog.csdn.net/20170609153042962?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvYmlndHJlZV8zNzIx/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center)
     
-    
+19. redis数据结构
+
+    （1）整数集合
+
+    - 包含三个字段：encoding编码（16位，32位和64位）、length数组长度、contents[]数组
+
+    - 数组中的每一项都按照从小到大的顺序排列，且不重复。
+
+    - 升级：新加数据时，根据加入的数据类型分配空间；如果数据位数变大，之前的数据也要转变类型，并将之前的数据放到对应的空间，
+
+      升级的好处是提高灵活性、节省空间
+
+    （2）压缩列表
+
+    压缩列表是redis为了节约内存开发的，由一系列特殊编码的**连续内存块**组成的**顺序性数据结构**
+
+    - 字段：zlbytes（4字节）记录整个列表占用的内存字节数；ztail（4字节）记录表尾节点距离压缩列表起始地址有多少字节；
+
+      zllen（2字节）记录压缩列表包含的节点数量；entryX列表节点；zlend（1字节）压缩列表末端
+
+    - entryX列表节点也有三个字段：previous_entry_length记录了前一个节点的长度，本身有1个字节或者5个字节，通过当前地址减去pre属性的值就能得出前一个节点的位置，从而实现从表尾到表头的遍历；encoding属性记录了content保存的数据类型以及长度；content负责保存数据。
+
+    - 连锁更新：如果前一个节点长度小于254字节，pre属性只要一个字节保存这个长度值，否则用5个字节保存。假如新加的节点长度大于254，则e1节点需要5个字节的pre来保存，结果导致e1的长度也超过254，e2节点的pre也需要变成5个字节，以此类推形成连锁更新。
+
+    - 如果连锁更新涉及的节点数量不多，不会造成什么性能影响，平均复杂度为O(n)
+
+    （3）字典
+
+    - 字典字段：type和privdata属性是针对不同类型的键值对，为创建多态字典而设置的；ht属性是包含了两个项的数组，每一项都是一个哈希表，一般情况下只是用ht[0]哈希表，ht[1]哈希表只有在ht[0]哈希表rehash时使用；rehashidx属性记录目前rehash的进度，没有则是-1。
+    - 哈希表字段：table是一个数组，数组中每一个元素指向一个哈希节点；size记录哈希表大小；sizemask就是size-1，计算下标用的；used记录已有节点数量。
+    - 链地址法解决hash冲突
+    - rehash算法：为字典ht[1]分配空间，大小为大于等于ht[0].used*2的2的n次方；然后将ht[0]上的值rehash到ht[1]上，全部迁移后，释放ht[0]，ht[1]置为ht[0]，新建ht[1]空表。
+    - rehash的时机：
+      - 服务器没有进行BGSAVE，负载因子大于等于1
+      - 服务器正在执行BGSAVE，负载因子大于等于5
+      - 负载因子小于0.1时会进行收缩操作
+    - 渐进式rehash，就是分批次的进行rehash转移，通过rehashidx记录；这个时候的更新、查找、删除等操作会在两个哈希表上进行
+
+    （4）跳表
+
+    - 字段：header跳跃表表头；tail跳跃表表尾；level目前跳跃表内最高层数，表头不算；length目前跳表内节点数，表头不算
+    - 跳表节点字段：level：记录各个层，用L1、L2、L3等标记，包含前进指针和跨度两个属性；backword后退指针；score分值，节点按各自的分值从小到大排列；obj成员对象，节点保存的成员对象。（分值相同，按照对象大小排序）
+    - 平均时间复杂度为O(logn)
 
 ### 3. 计算机网络
 
